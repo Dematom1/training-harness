@@ -76,9 +76,12 @@ def read_events(paths: list[Path]) -> list[dict]:
 
 
 def git_revision() -> str:
-    result = subprocess.run(
-        ["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=False
-    )
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=False
+        )
+    except OSError:
+        return "unknown"
     return result.stdout.strip() if result.returncode == 0 else "unknown"
 
 

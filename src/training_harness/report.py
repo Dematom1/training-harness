@@ -1,6 +1,8 @@
 """Derive results from explicit run selections; absent evidence stays absent."""
 
+import os
 import statistics
+import tempfile
 from collections import defaultdict
 from datetime import date
 from pathlib import Path
@@ -236,7 +238,11 @@ def result_values(runs: dict[str, list[dict]], selection: dict, prices: dict) ->
         )
     else:
         values.append(MISSING)
-    values.extend([tps(selected("ray", "ray")), tps(selected("jax", "jax"))])
+    for backend in ("ray", "jax"):
+        events = selected(backend, backend, 8)
+        if eight and events and events[0]["workload"] != eight[0]["workload"]:
+            raise ValueError(f"{backend} must match the eight-GPU DDP workload")
+        values.append(tps(events))
     return values
 
 
@@ -252,9 +258,23 @@ def render_table(values: list[str]) -> str:
 
 
 def update_readme(path: Path, table: str) -> None:
-    text = path.read_text()
+    text = path.read_text(encoding="utf-8")
     if text.count(START) != 1 or text.count(END) != 1 or text.index(START) > text.index(END):
         raise ValueError("README needs exactly one ordered harness-results marker pair")
     start = text.index(START) + len(START)
     end = text.index(END)
-    path.write_text(text[:start] + "\n" + table + "\n" + text[end:])
+    updated = text[:start] + "\n" + table + "\n" + text[end:]
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=path.parent, delete=False
+        ) as stream:
+            temporary = Path(stream.name)
+            stream.write(updated)
+            stream.flush()
+            os.fsync(stream.fileno())
+        temporary.chmod(path.stat().st_mode & 0o777)
+        temporary.replace(path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)

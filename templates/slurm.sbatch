@@ -24,7 +24,8 @@ export HARNESS_BACKEND=ddp
 # USR1 targets all srun tasks (no B: prefix), so every rank reaches the hook.
 # Each rank owns one GPU. The loop initializes DDP using Slurm rank metadata.
 set +e
-srun --kill-on-bad-exit=1 python "$TRAIN_ENTRYPOINT"
+# Let coordinated exit 75 finish on every rank; kill stragglers after 60 seconds.
+srun --kill-on-bad-exit=0 --wait=60 python "$TRAIN_ENTRYPOINT"
 rc=$?
 set -e
 if [[ "$rc" -eq 75 ]]; then

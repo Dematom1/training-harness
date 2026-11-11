@@ -426,6 +426,125 @@ with Run(os.environ["HARNESS_LOG"], run_id=os.environ["HARNESS_RUN_ID"],
         with self.assertRaisesRegex(ValueError, "unterminated"):
             self.run_hook()
 
+    def test_missing_git_falls_back_to_unknown_when_constructing_run(self):
+        with patch(
+            "training_harness.recorder.subprocess.run", side_effect=FileNotFoundError("git")
+        ):
+            with self.run_hook(git_sha=None):
+                pass
+        self.assertEqual(self.events()[0]["git_sha"], "unknown")
+
+    def test_backend_reports_require_eight_gpus_and_matching_ddp_workload(self):
+        ddp = self.measured("ddp-eight", 8)
+        for backend in ("ray", "jax"):
+            with self.subTest(backend=backend):
+                small = self.measured(f"{backend}-small", 1, backend)
+                with self.assertRaisesRegex(ValueError, "8 GPUs"):
+                    result_values({"small": small}, {backend: "small"}, {})
+                with self.run_hook(
+                    f"{backend}-other", backend=backend, world_size=8, workload="different-workload"
+                ) as run:
+                    run.on_step(1, 100, 1, 1)
+                other = self.events(f"{backend}-other")
+                with self.assertRaisesRegex(ValueError, "workload"):
+                    result_values(
+                        {"ddp": ddp, "other": other}, {"ddp_8": "ddp", backend: "other"}, {}
+                    )
+                # A standalone eight-GPU backend run has no DDP workload to compare.
+                index = -2 if backend == "ray" else -1
+                self.assertEqual(
+                    result_values({"other": other}, {backend: "other"}, {})[index],
+                    f"100.00 ({backend}-other)",
+                )
+
+    def test_readme_partial_write_failure_preserves_original_and_cleans_up(self):
+        readme = self.root / "README.md"
+        original = f"intro\n{START}\nold\n{END}\noutro\n"
+        readme.write_text(original)
+        before = set(self.root.iterdir())
+        real_open = io.open
+
+        class PartialWriter:
+            def __init__(self, stream):
+                self.stream = stream
+
+            def __getattr__(self, name):
+                return getattr(self.stream, name)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                self.stream.close()
+
+            def write(self, text):
+                self.stream.write(text[:8])
+                raise OSError("simulated full disk")
+
+        def partial_open(file, mode="r", *args, **kwargs):
+            stream = real_open(file, mode, *args, **kwargs)
+            return PartialWriter(stream) if "w" in mode else stream
+
+        with patch("io.open", side_effect=partial_open):
+            with self.assertRaisesRegex(OSError, "full disk"):
+                update_readme(readme, "new results")
+        self.assertEqual(readme.read_text(), original)
+        self.assertEqual(set(self.root.iterdir()), before)
+
+    def test_readme_replace_failure_preserves_original_and_cleans_up(self):
+        readme = self.root / "README.md"
+        original = f"{START}\nold\n{END}\n"
+        readme.write_text(original)
+        before = set(self.root.iterdir())
+        with patch.object(Path, "replace", side_effect=OSError("replace failed")):
+            with self.assertRaisesRegex(OSError, "replace failed"):
+                update_readme(readme, "new results")
+        self.assertEqual(readme.read_text(), original)
+        self.assertEqual(set(self.root.iterdir()), before)
+        readme.chmod(0o644)
+        update_readme(readme, "new results")
+        self.assertEqual(readme.stat().st_mode & 0o777, 0o644)
+
+    def test_slurm_template_requeues_only_75_and_allows_bounded_peer_exit(self):
+        arguments = self.root / "srun-args.json"
+        control = self.root / "scontrol-args.json"
+        scripts = {
+            "srun": "import sys, os, json\nfrom pathlib import Path\n"
+            'Path(os.environ["ARGS"]).write_text(json.dumps(sys.argv[1:]))\n'
+            'sys.exit(int(os.environ["STUB_EXIT"]))\n',
+            "scontrol": "import sys, os, json\nfrom pathlib import Path\n"
+            'Path(os.environ["CONTROL"]).write_text(json.dumps(sys.argv[1:]))\n',
+        }
+        for name, body in scripts.items():
+            path = self.root / name
+            path.write_text(f"#!{sys.executable}\n{body}")
+            path.chmod(0o755)
+        template = Path(__file__).resolve().parents[1] / "templates/slurm.sbatch"
+        env = os.environ | {
+            "PATH": f"{self.root}{os.pathsep}{os.environ['PATH']}",
+            "TRAIN_ENTRYPOINT": "unused.py",
+            "HARNESS_LOG_ROOT": str(self.root),
+            "HARNESS_GPU_TYPE": "cpu-test",
+            "HARNESS_WORKLOAD": "test",
+            "SLURM_NTASKS": "8",
+            "ARGS": str(arguments),
+            "CONTROL": str(control),
+        }
+        for status, expected in ((0, 0), (75, 0), (143, 143)):
+            with self.subTest(status=status):
+                control.unlink(missing_ok=True)
+                process = subprocess.run(
+                    ["bash", str(template)], env=env | {"STUB_EXIT": str(status)}, check=False
+                )
+                self.assertEqual(process.returncode, expected)
+                argv = json.loads(arguments.read_text())
+                options = dict(arg.split("=", 1) for arg in argv if arg.startswith("--"))
+                self.assertEqual(options["--kill-on-bad-exit"], "0")
+                self.assertGreater(int(options.get("--wait", "0")), 0)
+                self.assertEqual(control.exists(), status == 75)
+                if status == 75:
+                    self.assertEqual(json.loads(control.read_text()), ["requeue", "123"])
+
     def test_resume_in_a_new_process(self):
         script = self.root / "restart.py"
         script.write_text("""import os, signal, sys

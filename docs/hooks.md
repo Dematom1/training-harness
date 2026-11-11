@@ -107,7 +107,7 @@ with MAX. The stop agreement callback must all-reduce an integer flag with MAX
 and return a bool on every worker. Call it on every step, even without a signal.
 Checkpoint callbacks must finish all DDP collective work before return and exit.
 On a coordinated preemption, `Run` also calls the supplied barrier after rank zero
-flushes its end record, before any worker exits and triggers srun peer termination.
+flushes its end record, before any worker exits and starts srun's bounded peer-exit wait.
 
 ### Ray Train
 
@@ -182,7 +182,10 @@ the previous handlers on exit. A handler only latches the first signal.
 `poll_preemption(save, *, agree=bool)` runs at the next safe point. It logs the
 signal, saves a checkpoint, records a requeue request, and exits with code 75.
 The batch script interprets only code 75 as a request for `scontrol requeue`.
-Other failures remain failures. The default `agree=bool` is for one worker only.
+The template disables immediate peer termination with `--kill-on-bad-exit=0` and
+uses `--wait=60` to bound the wait after the first worker exits. Workers that do
+not exit within that interval are terminated by Slurm. Other failures remain
+failures. The default `agree=bool` is for one worker only.
 Use a collective OR for distributed jobs. Do not swallow `SystemExit(75)`.
 
 Allow more notice than a worst-case step plus checkpoint takes. SIGKILL, a dead
@@ -217,7 +220,8 @@ The README selects DDP runs through `ddp_1` and `ddp_8`. The sweep report includ
 all four sizes. The 1-GPU comparison is an instrumented baseline, not a theoretical
 GPU specification. Scaling comparisons require matching workload, variant, GPU
 type, backend, and git revision. A logical run must keep its git revision across
-restarts; use a new run ID for a code change.
+restarts; use a new run ID for a code change. Ray and JAX table selections require
+eight GPUs. When `ddp_8` is selected, each must match its workload.
 
 Cost selects the `ddp_8` run. It sums completed attempt intervals from
 `attempt_start` to `attempt_end`, including failed or preempted attempts, then
@@ -233,6 +237,10 @@ valid date. It displays the quote source and date alongside the estimate.
 Rates are not fetched or refreshed automatically. All attempts in a logical run
 use that one quoted rate, so the result remains an estimate even for variable
 Spot prices. No rates are fabricated in the committed config.
+
+The README writer stages an adjacent temporary file and replaces the README only
+after a complete write and flush. Failed writes or replacements leave the
+original intact and remove the temporary file.
 
 ## Offline verification limits
 
