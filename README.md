@@ -70,12 +70,26 @@ with Run(
         run.poll_preemption(save_checkpoint, agree=any_worker_requested_stop)
 ```
 
-## Compare runs
+## Plan a scaling sweep
 
-Run the training loop separately at each GPU count and record each run with
-`Run`. Select the resulting run IDs in `config/results.json` as described below;
-the report computes scaling efficiency from the 1- and 8-GPU measurements.
-See [`templates/slurm.sbatch`](templates/slurm.sbatch) for requeue jobs.
+The 1/2/4/8-GPU sweep produces the scaling-efficiency 1→8 GPUs measurement in the
+results table. It computes `tps_N / (N * tps_1)` from comparable recorded runs.
+A sweep defaults to a dry-run. It runs no subprocesses and creates no files.
+Arguments after `--` are an argv list, never shell code. Your script reads
+`HARNESS_*` environment variables to construct `Run`.
+
+```sh
+uv run training-harness sweep --output runs/scaling-v1 \
+  --gpu-type L4 --workload gpt124m-fineweb-v1 \
+  -- srun --ntasks={world_size} --gpus-per-task=1 python train.py
+```
+
+After you have an appropriate allocation, add `--execute` to run 1, 2, 4, and 8
+GPUs sequentially. The driver writes one JSONL log per size, `sweep.json`, and
+`scaling.md`. For Ray or JAX, change `--backend` and supply your own launcher.
+The Slurm sweep assumes an existing allocation large enough for every size.
+A queued `sbatch` command that returns before training completes is not a sweep
+launcher. See [`templates/slurm.sbatch`](templates/slurm.sbatch) for requeue jobs.
 
 ## Publish measured results
 

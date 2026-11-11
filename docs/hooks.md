@@ -208,9 +208,13 @@ cover logged completed steps, not an in-flight optimizer step or unseen host los
 
 ## Scaling and prices
 
-Run the training loop separately at each GPU count and select run IDs through
-`config/results.json`. The report computes `tps_N / (N * tps_1)`; a missing baseline
-stays unmeasured. The 1-GPU comparison is an instrumented baseline, not a theoretical
+The sweep launches 1, 2, 4, and 8 GPUs through the caller's argv template. Supported
+placeholders are `{world_size}`, `{run_id}`, and `{log}`. It supplies `HARNESS_LOG`,
+`HARNESS_RUN_ID`, `HARNESS_BACKEND`, `HARNESS_WORLD_SIZE`, `HARNESS_GPU_TYPE`, and
+`HARNESS_WORKLOAD`. The loop must use these values; the launcher must honor the GPU
+count. The driver computes `tps_N / (N * tps_1)`. A missing baseline stays unmeasured.
+The README selects DDP runs through `ddp_1` and `ddp_8`. The sweep report includes
+all four sizes. The 1-GPU comparison is an instrumented baseline, not a theoretical
 GPU specification. Scaling comparisons require matching workload, variant, GPU
 type, backend, and git revision. A logical run must keep its git revision across
 restarts; use a new run ID for a code change.
@@ -234,8 +238,8 @@ Spot prices. No rates are fabricated in the committed config.
 
 `uv run python -m unittest discover -s tests -v` exercises the scalar dummy model,
 append-only restore, signal latching, checkpoint failure, repeated requeues,
-new-process resume, weighted throughput, price math, backend labels, profiler
-hooks, and nine-row rendering. Synthetic durations and prices
+new-process resume, weighted throughput, all sweep sizes, price math, backend
+labels, profiler hooks, and nine-row rendering. Synthetic durations and prices
 exist only in tests. Actual DDP reductions, Ray retries, JAX device completion,
 GPU traces, and Slurm site policy require the caller's real training environment.
 No CPU test result is evidence of tokens per second on a GPU.

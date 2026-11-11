@@ -340,17 +340,66 @@ class HarnessTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "duplicate"):
             load_runs([self.root / "one.jsonl"] * 2)
 
-    def test_cli_home_and_rejects_unneeded_sweep(self):
+    def test_cli_home_errors_and_sweep_is_dry_by_default(self):
         stream = io.StringIO()
         with redirect_stdout(stream):
             self.assertEqual(main([]), 0)
+            self.assertEqual(
+                main(
+                    [
+                        "sweep",
+                        "--output",
+                        str(self.root / "sweep"),
+                        "--gpu-type",
+                        "test-gpu",
+                        "--workload",
+                        "test",
+                        "--",
+                        "echo",
+                        "{world_size}",
+                    ]
+                ),
+                0,
+            )
         self.assertIn("measurements[9]", stream.getvalue())
-        with redirect_stdout(io.StringIO()), self.assertRaises(SystemExit) as error:
-            main(["sweep"])
-        self.assertEqual(error.exception.code, 2)
+        self.assertIn("dry-run; no commands executed", stream.getvalue())
+        self.assertFalse((self.root / "sweep").exists())
         with redirect_stdout(io.StringIO()), self.assertRaises(SystemExit) as error:
             main(["--unknown"])
         self.assertEqual(error.exception.code, 2)
+
+    def test_sweep_executes_only_local_cpu_hook_command(self):
+        script = self.root / "worker.py"
+        script.write_text("""import os
+from training_harness import Run
+n = int(os.environ["HARNESS_WORLD_SIZE"])
+with Run(os.environ["HARNESS_LOG"], run_id=os.environ["HARNESS_RUN_ID"],
+         backend=os.environ["HARNESS_BACKEND"], world_size=n,
+         gpu_type=os.environ["HARNESS_GPU_TYPE"], workload=os.environ["HARNESS_WORKLOAD"]) as r:
+    r.on_step(1, n * 100, 1, 1)
+""")
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(
+                main(
+                    [
+                        "sweep",
+                        "--execute",
+                        "--output",
+                        str(self.root / "sweep"),
+                        "--gpu-type",
+                        "test-gpu",
+                        "--workload",
+                        "test",
+                        "--",
+                        sys.executable,
+                        str(script),
+                    ]
+                ),
+                0,
+            )
+        report = (self.root / "sweep" / "scaling.md").read_text()
+        self.assertIn("| 8 | 800.00 | 100.00% |", report)
+        self.assertEqual(len(json.loads((self.root / "sweep" / "sweep.json").read_text())), 4)
 
     def test_preemption_exit_barrier_follows_durable_end_record(self):
         calls = []
