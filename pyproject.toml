@@ -1,0 +1,24 @@
+[build-system]
+requires = ["uv_build>=0.9,<0.10"]
+build-backend = "uv_build"
+
+[project]
+name = "training-harness"
+version = "0.1.0"
+description = "Measurement hooks for user-owned distributed training loops"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+dependencies = []
+
+[project.scripts]
+training-harness = "training_harness.cli:main"
+
+[dependency-groups]
+dev = ["ruff>=0.14,<0.15"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]

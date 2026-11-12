@@ -1,0 +1,20 @@
+{
+  "currency": "USD",
+  "scope": "Estimate: accelerator charges only during instrumented attempts; excludes CPU, RAM, disks, network, tax, startup, and allocation overhead. Not an invoice.",
+  "gpus": {
+    "L4": {
+      "usd_per_gpu_hour": null,
+      "source": "https://cloud.google.com/compute/gpus-pricing",
+      "as_of": null,
+      "region": null,
+      "purchase_model": "spot"
+    },
+    "A100-40GB": {
+      "usd_per_gpu_hour": null,
+      "source": "https://cloud.google.com/compute/gpus-pricing",
+      "as_of": null,
+      "region": null,
+      "purchase_model": "spot"
+    }
+  }
+}
